@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Appel Minimaliste PWA</title>
+    <!-- Lier le Manifeste PWA (conservé pour l'installation d'icône) -->
+    <link rel="manifest" href="manifest.json">
+    <!-- Définir les icônes de base pour iOS (si le manifeste n'est pas entièrement pris en charge) -->
+    <link rel="apple-touch-icon" href="https://placehold.co/192x192/059669/ffffff?text=APP">
+
+    <!-- Tailwind CSS pour un style minimaliste et réactif -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+        .container {
+            width: 100%;
+            max-width: 480px;
+            background-color: #ffffff;
+            border-radius: 1.5rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            padding: 2.5rem;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+        .message-box {
+            padding: 0.75rem;
+            border-radius: 0.75rem;
+            font-size: 0.875rem;
+            color: #4b5563;
+            background-color: #e5e7eb;
+            margin-top: 1rem;
+        }
+        .online-status {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-left: 0.5rem;
+            vertical-align: middle;
+        }
+        .online {
+            background-color: #10b981;
+        }
+        .offline {
+            background-color: #ef4444;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container">
+        <h1 class="text-3xl font-bold text-gray-800">Appel Minimaliste</h1>
+        
+        <!-- Section d'authentification -->
+        <div id="auth-section" class="flex flex-col gap-4">
+            <p class="text-gray-600">Connectez-vous pour commencer.</p>
+            <button id="login-button" class="w-full px-4 py-2 bg-blue-600 text-white font-semibold rounded-xl shadow-lg hover:bg-blue-700 transition-colors">
+                Se connecter (anonyme)
+            </button>
+        </div>
+        
+        <!-- Section principale de l'application -->
+        <div id="main-app" class="hidden flex-col gap-4">
+            <div class="p-4 bg-gray-50 rounded-xl border border-gray-200">
+                <p class="text-sm font-medium text-gray-500">Votre identifiant (partagez-le avec votre contact) :</p>
+                <code id="user-id-display" class="block mt-2 font-mono text-xs text-gray-700 break-all bg-gray-100 p-2 rounded-lg"></code>
+            </div>
+ 
+            <div class="flex flex-col gap-2">
+                <p class="text-lg font-semibold text-gray-800">Gérer votre contact unique</p>
+                <div class="flex items-center gap-2">
+                    <input type="text" id="contact-input" placeholder="Entrez l'ID du contact" class="flex-1 px-4 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button id="set-contact-btn" class="px-4 py-2 bg-purple-600 text-white font-semibold rounded-xl shadow-lg hover:bg-purple-700 transition-colors">
+                        Définir
+                    </button>
+                </div>
+            </div>
+ 
+            <div class="p-4 bg-gray-50 rounded-xl border border-gray-200">
+                <p class="text-lg font-semibold text-gray-800">
+                    Contact : <span id="contact-id-display" class="font-normal text-gray-600 italic">Aucun</span>
+                    <span id="contact-status-dot" class="online-status offline"></span>
+                </p>
+                <p id="call-status-display" class="text-sm text-gray-500 mt-2">Prêt à appeler</p>
+            </div>
+            
+            <!-- Contrôles d'appel -->
+            <div class="flex justify-around gap-4 mt-4">
+                <button id="call-btn" class="flex-1 px-6 py-3 bg-green-500 text-white font-bold text-lg rounded-full shadow-lg hover:bg-green-600 transition-colors">
+                    Appeler
+                </button>
+                <button id="hangup-btn" class="flex-1 px-6 py-3 bg-red-500 text-white font-bold text-lg rounded-full shadow-lg hover:bg-red-600 transition-colors hidden">
+                    Raccrocher
+                </button>
+            </div>
+            
+            <!-- Conteneurs audio -->
+            <audio id="remote-audio" autoplay></audio>
+        </div>
+ 
+        <!-- Boîte de message personnalisée pour les notifications -->
+        <div id="message-container" class="message-box hidden"></div>
+    </div>
+    
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Le code d'enregistrement du Service Worker a été supprimé pour éviter l'erreur
+        // de protocole spécifique à l'environnement.
+
+        // Variables globales pour l'application
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Références DOM
+        const authSection = document.getElementById('auth-section');
+        const loginButton = document.getElementById('login-button');
+        const mainApp = document.getElementById('main-app');
+        const userIdDisplay = document.getElementById('user-id-display');
+        const contactInput = document.getElementById('contact-input');
+        const setContactBtn = document.getElementById('set-contact-btn');
+        const contactIdDisplay = document.getElementById('contact-id-display');
+        const contactStatusDot = document.getElementById('contact-status-dot');
+        const callStatusDisplay = document.getElementById('call-status-display');
+        const callBtn = document.getElementById('call-btn');
+        const hangupBtn = document.getElementById('hangup-btn');
+        const remoteAudio = document.getElementById('remote-audio');
+        const messageContainer = document.getElementById('message-container');
+
+        // Variables Firebase et WebRTC
+        let app, db, auth, userId, rtcPeerConnection;
+        let localStream;
+        let contactId = '';
+        let presenceIntervalId;
+
+        // Configuration STUN/TURN
+        const iceServers = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+            ]
+        };
+
+        // Fonction pour afficher des messages personnalisés
+        function showMessage(message) {
+            messageContainer.textContent = message;
+            messageContainer.classList.remove('hidden');
+            setTimeout(() => {
+                messageContainer.classList.add('hidden');
+            }, 5000);
+        }
+
+        // --- Firebase et Authentification ---
+        async function initializeFirebase() {
+            try {
+                if (Object.keys(firebaseConfig).length > 0) {
+                    app = initializeApp(firebaseConfig);
+                    db = getFirestore(app);
+                    auth = getAuth(app);
+                    
+                    onAuthStateChanged(auth, async (user) => {
+                        if (user) {
+                            userId = user.uid;
+                            userIdDisplay.textContent = `${appId}/${userId}`;
+                            authSection.classList.add('hidden');
+                            mainApp.classList.remove('hidden');
+                            showMessage("Connexion réussie.");
+                            
+                            // Démarre les écouteurs Firestore et la présence
+                            await setupFirestoreListeners();
+                            startPresenceHeartbeat();
+                            
+                        } else {
+                            // Cacher l'interface principale si l'utilisateur est déconnecté
+                            mainApp.classList.add('hidden');
+                            authSection.classList.remove('hidden');
+                        }
+                    });
+
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                    
+                } else {
+                    showMessage("Configuration Firebase manquante. Vérifiez la console.");
+                    console.error("Configuration Firebase non trouvée.");
+                }
+            } catch (error) {
+                console.error("Erreur d'initialisation de Firebase ou d'authentification:", error);
+                showMessage(`Erreur de connexion: ${error.message}`);
+            }
+        }
+
+        // Met à jour la présence de l'utilisateur
+        function startPresenceHeartbeat() {
+            if (presenceIntervalId) clearInterval(presenceIntervalId);
+            presenceIntervalId = setInterval(async () => {
+                const userDocRef = doc(db, 'artifacts', appId, 'users', userId);
+                await setDoc(userDocRef, { lastSeen: new Date().getTime() }, { merge: true });
+            }, 20000); // Met à jour toutes les 20 secondes
+        }
+
+        // --- Firestore pour la signalisation ---
+        async function setupFirestoreListeners() {
+            // Écoute les messages de signalisation sur notre propre document
+            const userDocRef = doc(db, 'artifacts', appId, 'users', userId);
+            onSnapshot(userDocRef, async (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    
+                    // Si un contact est défini dans la base de données, mettez à jour l'interface
+                    if (data.contactId && data.contactId !== contactId) {
+                        contactId = data.contactId;
+                        contactIdDisplay.textContent = contactId;
+                        listenToContactStatus();
+                    }
+
+                    // Répondre à une offre (appel entrant)
+                    if (data.offer && !rtcPeerConnection) {
+                        showMessage("Appel entrant...");
+                        await handleOffer(data.offer);
+                    }
+                    
+                    // Gérer une réponse à notre offre
+                    if (data.answer && rtcPeerConnection && rtcPeerConnection.signalingState !== 'stable') {
+                        await handleAnswer(data.answer);
+                    }
+
+                    // Ajouter les candidats ICE
+                    if (data.iceCandidates && data.iceCandidates.length > 0) {
+                        for (const candidate of data.iceCandidates) {
+                            try {
+                                await rtcPeerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                            } catch (e) {
+                                console.error('Erreur lors de l\'ajout du candidat ICE:', e);
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        async function listenToContactStatus() {
+            if (!contactId) return;
+
+            // Écoute le statut du contact
+            const contactDocRef = doc(db, 'artifacts', appId, 'users', contactId);
+            onSnapshot(contactDocRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    const lastSeen = data.lastSeen;
+                    const isOnline = lastSeen && (new Date().getTime() - lastSeen < 60000); // Considéré en ligne si vu dans la dernière minute
+                    
+                    if (isOnline) {
+                        contactStatusDot.classList.remove('offline');
+                        contactStatusDot.classList.add('online');
+                    } else {
+                        contactStatusDot.classList.remove('online');
+                        contactStatusDot.classList.add('offline');
+                    }
+                } else {
+                    contactStatusDot.classList.remove('online');
+                    contactStatusDot.classList.add('offline');
+                }
+            });
+        }
+
+        // --- WebRTC : Création, offre, réponse, etc. ---
+        async function createPeerConnection() {
+            rtcPeerConnection = new RTCPeerConnection(iceServers);
+
+            // Gérer les candidats ICE
+            rtcPeerConnection.onicecandidate = async (event) => {
+                if (event.candidate) {
+                    const docRef = doc(db, 'artifacts', appId, 'users', userId);
+                    const docSnap = await getDoc(docRef);
+                    const candidates = docSnap.exists() && docSnap.data().iceCandidates || [];
+                    candidates.push(event.candidate.toJSON());
+                    await setDoc(docRef, { iceCandidates: candidates }, { merge: true });
+                }
+            };
+
+            // Gérer les flux audio entrants
+            rtcPeerConnection.ontrack = (event) => {
+                remoteAudio.srcObject = event.streams[0];
+                showMessage("L'appel a été établi !");
+                callStatusDisplay.textContent = "En communication...";
+                callBtn.classList.add('hidden');
+                hangupBtn.classList.remove('hidden');
+            };
+
+            // Obtenir le flux audio local et l'ajouter
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            localStream.getTracks().forEach(track => rtcPeerConnection.addTrack(track, localStream));
+        }
+
+        async function createOffer() {
+            if (!contactId) {
+                showMessage("Veuillez d'abord définir un contact.");
+                return;
+            }
+            try {
+                await createPeerConnection();
+                const offer = await rtcPeerConnection.createOffer();
+                await rtcPeerConnection.setLocalDescription(offer);
+
+                const contactDocRef = doc(db, 'artifacts', appId, 'users', contactId);
+                const userDocRef = doc(db, 'artifacts', appId, 'users', userId);
+
+                // Publier l'offre sur le document du contact
+                await setDoc(contactDocRef, { offer: offer.toJSON(), callerId: userId, iceCandidates: [] }, { merge: true });
+                // Réinitialiser les candidats ICE pour cet appel
+                await setDoc(userDocRef, { iceCandidates: [] }, { merge: true });
+
+                showMessage("Appel en cours... en attente de réponse.");
+                callStatusDisplay.textContent = "Appel en cours...";
+            } catch (error) {
+                console.error("Erreur lors de la création de l'offre:", error);
+                showMessage("Échec de l'appel. Vérifiez la console.");
+            }
+        }
+
+        async function handleOffer(offer) {
+            try {
+                await createPeerConnection();
+                await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                const answer = await rtcPeerConnection.createAnswer();
+                await rtcPeerConnection.setLocalDescription(answer);
+
+                const callerId = (await getDoc(doc(db, 'artifacts', appId, 'users', userId))).data().callerId;
+                const callerDocRef = doc(db, 'artifacts', appId, 'users', callerId);
+                const userDocRef = doc(db, 'artifacts', appId, 'users', userId);
+
+                // Publier la réponse sur le document de l'appelant
+                await setDoc(callerDocRef, { answer: answer.toJSON() }, { merge: true });
+                await setDoc(userDocRef, { callerId: null, offer: null, iceCandidates: [] }, { merge: true });
+
+            } catch (error) {
+                console.error("Erreur lors de la gestion de l'offre:", error);
+                showMessage("Échec de la réception de l'appel. Vérifiez la console.");
+            }
+        }
+
+        async function handleAnswer(answer) {
+            try {
+                await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+                showMessage("Réponse reçue. L'appel est établi !");
+            } catch (error) {
+                console.error("Erreur lors de la gestion de la réponse:", error);
+                showMessage("Échec de la réponse. Vérifiez la console.");
+            }
+        }
+
+        function hangUp() {
+            if (rtcPeerConnection) {
+                rtcPeerConnection.close();
+                rtcPeerConnection = null;
+            }
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+            remoteAudio.srcObject = null;
+            callBtn.classList.remove('hidden');
+            hangupBtn.classList.add('hidden');
+            callStatusDisplay.textContent = "Appel terminé. Prêt à appeler.";
+            showMessage("Appel raccroché.");
+        }
+
+        // --- Gestion des événements de l'UI ---
+        loginButton.addEventListener('click', initializeFirebase);
+        setContactBtn.addEventListener('click', async () => {
+            const newContactId = contactInput.value.trim();
+            if (newContactId && newContactId !== userId) {
+                const userDocRef = doc(db, 'artifacts', appId, 'users', userId);
+                await setDoc(userDocRef, { contactId: newContactId }, { merge: true });
+                contactId = newContactId;
+                contactIdDisplay.textContent = contactId;
+                listenToContactStatus();
+                showMessage(`Contact défini sur ${contactId}`);
+            } else {
+                showMessage("Identifiant de contact invalide.");
+            }
+        });
+
+        callBtn.addEventListener('click', createOffer);
+        hangupBtn.addEventListener('click', hangUp);
+
+        // Nettoyage en cas de fermeture
+        window.addEventListener('beforeunload', () => {
+            if (rtcPeerConnection) hangUp();
+        });
+    </script>
+</body>
